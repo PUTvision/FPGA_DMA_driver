@@ -7,21 +7,6 @@
 #include <xaxidma.h>		// for axidma types
 #include "aligned_mem_functions.h"
 
-XAxiDma* dmaSG::GetAxiDmaInstancePtr(void)
-{
-	return &(this->axiDma);
-}
-
-u8** dmaSG::GetRxBuffers(void)
-{
-	return this->RxBuffers;
-}
-
-u32 dmaSG::GetSizeOfRxBuffers(void)
-{
-	return this->RxBufferSizeInBytes;
-}
-
 void dmaSG::Init_DMA_lowlevel(u32 AXI_DMA_DEVICE_ID)
 {
 	XAxiDma* AxiDmaPtr = &(this->axiDma);
@@ -235,8 +220,78 @@ void dmaSG::Init(u32 AXI_DMA_DEVICE_ID, u32 numberOfTxBuffers, u32 numberOfRxBuf
 	Init_Rx();
 
 	PrepareRxBuffers();
-
 	AttachRxBuffers();
+
+	// TODO: uncomment when intterrupts are ready
+	//SetupInterrupts();
+}
+
+void dmaSG::Send2(u8* dataToSend, u32 numberOfPacketsToSend, u32 sizeOfDataToSendInBytes)
+{
+	int status;
+	XAxiDma_BdRing* TxRingPtr = this->Tx.RingPtr;
+
+	/* Allocate a BD */
+	status = XAxiDma_BdRingAlloc(TxRingPtr, numberOfPacketsToSend, &(this->Tx.BdPtr));
+	if (status != XST_SUCCESS) {
+		xil_printf("Unable to allocate Tx buffers\r\n");
+	}
+
+	XAxiDma_Bd* CurBdPtr = this->Tx.BdPtr;
+	for(u32 i=0; i<numberOfPacketsToSend; ++i)
+	{
+		const u32 TX_address = (u32) &dataToSend[i*sizeOfDataToSendInBytes];
+		/* Set up the BD using the information of the packet to transmit */
+		status = XAxiDma_BdSetBufAddr(CurBdPtr, TX_address);
+		if (status != XST_SUCCESS) {
+			xil_printf("Tx set buffer addr %x on BD %x failed %d\r\n",
+					TX_address, (unsigned int)CurBdPtr, status);
+		}
+
+		const u32 TX_numberOfBytes = sizeOfDataToSendInBytes;
+		status = XAxiDma_BdSetLength(CurBdPtr, TX_numberOfBytes,
+					TxRingPtr->MaxTransferLen);
+		if (status != XST_SUCCESS) {
+			xil_printf("Tx set length %d on BD %x failed %d\r\n",
+					TX_numberOfBytes, (unsigned int)CurBdPtr, status);
+		}
+
+		u32 CrBits = 0;
+		if (i == 0)
+		{
+			CrBits |= XAXIDMA_BD_CTRL_TXSOF_MASK;
+		}
+
+		if (i == (numberOfPacketsToSend - 1))
+		{
+			CrBits |= XAXIDMA_BD_CTRL_TXEOF_MASK;
+			XAxiDma_BdSetCtrl(CurBdPtr, XAXIDMA_BD_CTRL_TXEOF_MASK);
+		}
+
+
+		//CrBits |= XAXIDMA_BD_CTRL_TXSOF_MASK;
+		//CrBits |= XAXIDMA_BD_CTRL_TXEOF_MASK;
+
+		//	/* For single packet, both SOF and EOF are to be set
+		//	 */
+		//	XAxiDma_BdSetCtrl(BdPtr, XAXIDMA_BD_CTRL_TXEOF_MASK |
+		//						XAXIDMA_BD_CTRL_TXSOF_MASK);
+
+		XAxiDma_BdSetCtrl(CurBdPtr, CrBits);
+
+		XAxiDma_BdSetId(CurBdPtr, TX_address);
+
+		CurBdPtr = XAxiDma_BdRingNext(TxRingPtr, CurBdPtr);
+
+		this->Tx.IncreaseNumberOfEnquedOperations();
+	}
+	this->Rx.IncreaseNumberOfEnquedOperations();
+
+	/* Give the BD to DMA to kick off the transmission. */
+	status = XAxiDma_BdRingToHw(TxRingPtr, numberOfPacketsToSend, this->Tx.BdPtr);
+	if (status != XST_SUCCESS) {
+		xil_printf("Bringing Tx buffer to hw failed %d\r\n", status);
+	}
 }
 
 void dmaSG::Send(u8* dataToSend, u32 sizeOfDataToSendInBytes)
@@ -250,7 +305,7 @@ void dmaSG::Send(u8* dataToSend, u32 sizeOfDataToSendInBytes)
 	XAxiDma_BdRing* TxRingPtr = this->Tx.RingPtr;
 
 	/* Allocate a BD */
-	status = XAxiDma_BdRingAlloc(TxRingPtr, 1, &(this->Tx.BdPtr));
+	status = XAxiDma_BdRingAlloc(TxRingPtr, numberOfPacketsSend, &(this->Tx.BdPtr));
 	if (status != XST_SUCCESS) {
 		xil_printf("Unable to allocate Tx buffers\r\n");
 	}
@@ -368,14 +423,17 @@ void dmaSG::WaitForRxCompleteAndFree(void)
 		 */
 		int FreeBdCount = XAxiDma_BdRingGetFreeCnt(this->Rx.RingPtr);
 
-		status = XAxiDma_BdRingAlloc(this->Rx.RingPtr, FreeBdCount, &(this->Rx.BdPtr));
-		if (status != XST_SUCCESS) {
-			xil_printf("bd alloc failed\r\n");
-		}
+		if(FreeBdCount != 0)
+		{
+			status = XAxiDma_BdRingAlloc(this->Rx.RingPtr, FreeBdCount, &(this->Rx.BdPtr));
+			if (status != XST_SUCCESS) {
+				xil_printf("RX bd alloc failed. FreeBdCount: %d\r\n", FreeBdCount);
+			}
 
-		status = XAxiDma_BdRingToHw(this->Rx.RingPtr, FreeBdCount, this->Rx.BdPtr);
-		if (status != XST_SUCCESS) {
-			xil_printf("Submit %d rx BDs failed %d\r\n", FreeBdCount, status);
+			status = XAxiDma_BdRingToHw(this->Rx.RingPtr, FreeBdCount, this->Rx.BdPtr);
+			if (status != XST_SUCCESS) {
+				xil_printf("Submit %d rx BDs failed %d\r\n", FreeBdCount, status);
+			}
 		}
 
 		this->Rx.IncreaseNumberOfProcessedBds(ProcessedBdCount);
@@ -413,7 +471,7 @@ void dmaSG::FreeProcessedRx(void)
 
 	status = XAxiDma_BdRingAlloc(this->Rx.RingPtr, FreeBdCount, &(this->Rx.BdPtr));
 	if (status != XST_SUCCESS) {
-		xil_printf("bd alloc failed\r\n");
+		xil_printf("RX bd alloc failed\r\n");
 	}
 
 	status = XAxiDma_BdRingToHw(this->Rx.RingPtr, FreeBdCount, this->Rx.BdPtr);
@@ -423,4 +481,5 @@ void dmaSG::FreeProcessedRx(void)
 
 	this->Rx.ClearProcessedData();
 }
+
 

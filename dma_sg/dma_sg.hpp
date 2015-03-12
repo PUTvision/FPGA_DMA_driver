@@ -8,81 +8,7 @@
 
 #include <xaxidma.h>		// for axidma types
 #include "aligned_mem_functions.h"
-
-class TransferControl
-{
-private:
-	u32 numberOfBds;
-	s32 processedBdCount;
-	s32 numberOfEnquedOperations;
-
-public:
-	u32* BdSpacePtr;
-	XAxiDma_BdRing* RingPtr;
-	XAxiDma_Bd* BdPtr;
-
-	void Init(u32 numberOfBuffers)
-	{
-		this->numberOfBds = numberOfBuffers;
-		this->processedBdCount = 0;
-		this->numberOfEnquedOperations = 0;
-
-		this->BdSpacePtr = NULL;
-		this->RingPtr = NULL;
-		this->BdPtr = NULL;
-	}
-
-	u32 GetNumberOfBds(void)
-	{
-		return this->numberOfBds;
-	}
-
-	void ClearProcessedData(void)
-	{
-		this->processedBdCount = 0;
-		this->numberOfEnquedOperations = 0;
-	}
-
-	bool AreAllOperationsFinished(void)
-	{
-		bool status = true;
-
-		if(this->processedBdCount < this->numberOfEnquedOperations)
-		{
-			status = false;
-		}
-
-		return status;
-	}
-
-	void IncreaseNumberOfProcessedBds(s32 valueToIncrease)
-	{
-		this->processedBdCount += valueToIncrease;
-	}
-
-	s32 GetNumberOfProcessedBds(void)
-	{
-		return this->processedBdCount;
-	}
-
-	void IncreaseNumberOfEnquedOperations(void)
-	{
-		this->numberOfEnquedOperations++;
-	}
-
-	TransferControl(void)
-	{
-		Init(0);
-	}
-
-	~TransferControl(void)
-	{
-		if(this->BdSpacePtr != NULL)
-		{
-			aligned_free(this->BdSpacePtr);
-		}
-	}
-};
+#include "TransferControl.hpp"
 
 class dmaSG
 {
@@ -98,6 +24,17 @@ private:
 
 	static const u32 ALIGNE_VALUE = 64;
 
+
+	// special flags for interrupt testing
+	/*
+	 * Flags interrupt handlers use to notify the application context the events.
+	 */
+	volatile int TxDone;
+	volatile int RxDone;
+	volatile int Error;
+
+	static const u32 RESET_TIMEOUT_COUNTER = 100;
+
 	void Init_DMA_lowlevel(u32 AXI_DMA_DEVICE_ID);
 
 	void Init_Tx(void);
@@ -110,14 +47,21 @@ private:
 
 	// TODO - add function that returns RX buffers and then create new ones and attach them to DMA for further processing
 
-	void ReleaseRxBuffers();
+	void ReleaseRxBuffers(void);
+
+	int SetupInterrupts(void);
+
+	// TODO - after interupts are working clean up and merge their code with old WaitForXXComplete and FreeProcessedXX methods
+	void TxCallback(XAxiDma_BdRing * TxRingPtr);
+	void RxCallback(XAxiDma_BdRing * RxRingPtr);
 
 public:
-	XAxiDma* GetAxiDmaInstancePtr(void);
+
 
 	void Init(u32 AXI_DMA_DEVICE_ID, u32 numberOfTxBuffers, u32 numberOfRxBuffers, u32 sizeInBytesOfEachRxBuffer);
 
 	void Send(u8* dataToSend, u32 sizeOfDataToSendInBytes);
+	void Send2(u8* dataToSend, u32 numberOfPacketsToSend, u32 sizeOfDataToSendInBytes);
 
 	void WaitForTxComplete(void);
 	void FreeProcessedTx(void);
@@ -129,8 +73,21 @@ public:
 
 	void WaitForRxCompleteAndFree(void);
 
-	u8** GetRxBuffers(void);
-	u32 GetSizeOfRxBuffers(void);
+	void TxIntrHandler(void *Callback);
+	void RxIntrHandler(void *Callback);
+
+	XAxiDma* GetAxiDmaInstancePtr(void)
+	{
+		return &(this->axiDma);
+	}
+	u8** GetRxBuffers(void)
+	{
+		return this->RxBuffers;
+	}
+	u32 GetSizeOfRxBuffers(void)
+	{
+		return this->RxBufferSizeInBytes;
+	}
 
 	dmaSG(void)
 	{

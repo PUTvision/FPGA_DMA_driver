@@ -107,21 +107,156 @@ public:
 
 };
 
-// drugi test - paczki o tym samym rozmiarze - 32 bajty, ale ró¿na liczba danych wysy³anych
+static void DMS_SG_send(dmaSG &dma, Packet32Bits &packetToSend, u32 sizeOfPartInBytes, u32 numberOfTransfers)
+{
+	u32 numberOfElementsInPart = sizeOfPartInBytes / sizeof(u32);
+
+	for(u32 i=0; i<numberOfTransfers; ++i)
+	{
+		dma.Send((u8*)&packetToSend.tableData[i*numberOfElementsInPart], sizeOfPartInBytes);
+	}
+
+	dma.WaitForTxCompleteAndFree();
+	//dma.WaitForTxComplete();
+	//dma.FreeProcessedTx();
+
+	dma.WaitForRxCompleteAndFree();
+	//dma.WaitForRxComplete();
+	// Check DMA transfer result
+	//dma.FreeProcessedRx();
+}
+
+static void DMS_SG_send2(dmaSG &dma, Packet32Bits &packetToSend, u32 sizeOfPartInBytes, u32 numberOfTransfers)
+{
+	dma.Send2((u8*)&packetToSend.tableData[0], numberOfTransfers, sizeOfPartInBytes);
+
+	dma.WaitForTxCompleteAndFree();
+	//dma.WaitForTxComplete();
+	//dma.FreeProcessedTx();
+
+	dma.WaitForRxCompleteAndFree();
+	//dma.WaitForRxComplete();
+	// Check DMA transfer result
+	//dma.FreeProcessedRx();
+}
+
+// second test - packets of the same size - 32 bytes, but different number of packets
+static void DMA_SG_test_samePacketSizeButDifferentNumberOfPackets(void)
+{
+	const u32 MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES = 8192;
+	const u32 SIZE_OF_TEST_TRANSFER_IN_BYTES = 32;
+	const u32 MAX_NUMBER_OF_TRANSFERS = MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES / SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+	dmaSG dma;
+	dma.Init(XPAR_AXI_DMA_0_DEVICE_ID, MAX_NUMBER_OF_TRANSFERS, MAX_NUMBER_OF_TRANSFERS, MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES);
+
+	TIMER_init(XPAR_PS7_SCUTIMER_0_DEVICE_ID);
+
+	Packet32Bits packetToSend;
+	packetToSend.CreateByNumberOfBytes(MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES);
+	FillDataTableWithIncreasingValue(packetToSend.tableData, packetToSend.tableSize, 0, 1);
+	Xil_DCacheFlushRange((u32)packetToSend.tableData, packetToSend.totalNumberOfBytes);
+
+    for(u32 i=1; i<=MAX_NUMBER_OF_TRANSFERS; i=i*2)
+    {
+    	u32 numberOfTransfersForMultipleTransfersTest = i;
+    	u32 sizeOfTransferForMultipleTransfersTest = SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+    	xil_printf("Multiple transfers test\r\n");
+    	xil_printf("Number of bytes to send: %d, number of transfers: %d \r\n", sizeOfTransferForMultipleTransfersTest, numberOfTransfersForMultipleTransfersTest);
+
+		TIMER_start();
+
+		DMS_SG_send2(dma, packetToSend, sizeOfTransferForMultipleTransfersTest, numberOfTransfersForMultipleTransfersTest);
+
+		TIMER_stop();
+		printf("Time to execute: %f us\r\n", TIMER_getTimeInUs());
+
+    	u32 numberOfTransfersForSingleTransferTest = 1;
+    	u32 sizeOfTransferForSingleTransfersTest = i * SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+    	xil_printf("Single transfer test\r\n");
+    	xil_printf("Number of bytes to send: %d, number of transfers: %d \r\n", sizeOfTransferForSingleTransfersTest, numberOfTransfersForSingleTransferTest);
+
+		TIMER_start();
+
+		DMS_SG_send(dma, packetToSend, sizeOfTransferForSingleTransfersTest, numberOfTransfersForSingleTransferTest);
+
+		TIMER_stop();
+		printf("Time to execute: %f us\r\n", TIMER_getTimeInUs());
+    }
+}
+
+static void DMA_SG_test_samePacketSizeButDifferentNumberOfPackets2(void)
+{
+	const u32 MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES = 8192;
+	const u32 SIZE_OF_TEST_TRANSFER_IN_BYTES = 32;
+	const u32 MAX_NUMBER_OF_TRANSFERS = MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES / SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+	dmaSG dma;
+	dma.Init(XPAR_AXI_DMA_0_DEVICE_ID, MAX_NUMBER_OF_TRANSFERS, MAX_NUMBER_OF_TRANSFERS, MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES);
+
+	TIMER_init(XPAR_PS7_SCUTIMER_0_DEVICE_ID);
+
+	Packet32Bits packetToSend;
+	packetToSend.CreateByNumberOfBytes(MAX_SIZE_OF_DATA_TO_TRANSFER_IN_BYTES);
+	FillDataTableWithIncreasingValue(packetToSend.tableData, packetToSend.tableSize, 0, 1);
+	Xil_DCacheFlushRange((u32)packetToSend.tableData, packetToSend.totalNumberOfBytes);
+
+    {
+    	u32 numberOfTransfersForMultipleTransfersTest = 50;
+    	u32 sizeOfTransferForMultipleTransfersTest = SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+    	xil_printf("Multiple transfers test\r\n");
+    	xil_printf("Number of bytes to send: %d, number of transfers: %d \r\n", sizeOfTransferForMultipleTransfersTest, numberOfTransfersForMultipleTransfersTest);
+
+		TIMER_start();
+
+		DMS_SG_send2(dma, packetToSend, sizeOfTransferForMultipleTransfersTest, numberOfTransfersForMultipleTransfersTest);
+
+		TIMER_stop();
+		printf("Time to execute: %f us\r\n", TIMER_getTimeInUs());
+
+    	u32 numberOfTransfersForSingleTransferTest = 1;
+    	u32 sizeOfTransferForSingleTransfersTest = 50 * SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+    	xil_printf("Single transfer test\r\n");
+    	xil_printf("Number of bytes to send: %d, number of transfers: %d \r\n", sizeOfTransferForSingleTransfersTest, numberOfTransfersForSingleTransferTest);
+
+		TIMER_start();
+
+		DMS_SG_send(dma, packetToSend, sizeOfTransferForSingleTransfersTest, numberOfTransfersForSingleTransferTest);
+
+		TIMER_stop();
+		printf("Time to execute: %f us\r\n", TIMER_getTimeInUs());
+
+    	u32 numberOfTransfersForFewTransferTest = 10;
+    	u32 sizeOfTransferForFewTransfersTest = 5 * 5 * SIZE_OF_TEST_TRANSFER_IN_BYTES;
+
+    	xil_printf("Few bigger transfers test\r\n");
+    	xil_printf("Number of bytes to send: %d, number of transfers: %d \r\n", sizeOfTransferForFewTransfersTest, numberOfTransfersForFewTransferTest);
+
+		TIMER_start();
+
+		DMS_SG_send2(dma, packetToSend, sizeOfTransferForFewTransfersTest, numberOfTransfersForFewTransferTest);
+
+		TIMER_stop();
+		printf("Time to execute: %f us\r\n", TIMER_getTimeInUs());
+    }
+}
 
 static void DMA_SG_test(void)
 {
-	dmaSG dma;
-
 	const u32 SIZE_IN_BYTES_OF_DATA_TO_TRANSFER = 8192;
 	const u32 MAX_NUMBER_OF_TRANSFERS = 2048;
 	const u32 MAX_SIZE_OF_TRANSFER = SIZE_IN_BYTES_OF_DATA_TO_TRANSFER;
 
+	dmaSG dma;
 	dma.Init(XPAR_AXI_DMA_0_DEVICE_ID, MAX_NUMBER_OF_TRANSFERS, MAX_NUMBER_OF_TRANSFERS, MAX_SIZE_OF_TRANSFER);
 
 	TIMER_init(XPAR_PS7_SCUTIMER_0_DEVICE_ID);
 
-    for(int i=1; i<1024; i=i*2)
+    for(u32 i=2; i<1024; i=i*2)
     {
     	u32 NUMBER_OF_TRANSFER_OPERATIONS = i;
     	xil_printf("Number of bytes to send: %d \r\nNumber of transfers: %d \r\n", SIZE_IN_BYTES_OF_DATA_TO_TRANSFER, NUMBER_OF_TRANSFER_OPERATIONS);
@@ -152,7 +287,7 @@ static void DMA_SG_test(void)
 
 		timerValue = TIMER_getCurrentValue();
 
-		dma.WaitForTxCompleteAndFree();
+		dma.WaitForRxCompleteAndFree();
 
 		//dma.WaitForRxComplete();
 
@@ -174,8 +309,9 @@ static void DMA_SG_test(void)
 		TIMER_stop();
 		timeInUsForTxOperation = TIMER_getTimeStartToValueInUs(timerValue);
 		timeInUsForRxOperation = TIMER_getTimeValueToStopInUs(timerValue);
-		printf("TX operation. Time to execute: %f us\r\n", timeInUsForTxOperation);
-		printf("RX operation. Time to execute: %f us\r\n", timeInUsForRxOperation);
+		//printf("TX operation. Time to execute: %f us\r\n", timeInUsForTxOperation);
+		//printf("RX operation. Time to execute: %f us\r\n", timeInUsForRxOperation);
+		printf("TX and RX operation. Time to execute: %f us\r\n", timeInUsForTxOperation+timeInUsForRxOperation);
     }
 }
 
@@ -185,7 +321,9 @@ int main()
 
     xil_printf("Hello World dma_sg_test\r\n");
 
-    DMA_SG_test();
+    //DMA_SG_test();
+    //DMA_SG_test_samePacketSizeButDifferentNumberOfPackets();
+    DMA_SG_test_samePacketSizeButDifferentNumberOfPackets2();
 
 	while(1)
 	{
